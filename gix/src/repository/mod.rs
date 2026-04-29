@@ -50,8 +50,12 @@ mod merge;
 mod object;
 #[cfg(feature = "attributes")]
 mod pathspec;
+#[cfg(any(feature = "blocking-network-client", feature = "async-network-client"))]
+mod push_pack;
 mod reference;
 mod remote;
+#[cfg(any(feature = "serve-upload-pack", feature = "serve-receive-pack"))]
+pub mod serve;
 mod revision;
 mod shallow;
 mod state;

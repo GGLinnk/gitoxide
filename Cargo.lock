@@ -1416,6 +1416,7 @@ version = "0.83.0"
 dependencies = [
  "anyhow",
  "async-std",
+ "bstr",
  "document-features",
  "gix",
  "gix-actor",
@@ -1446,6 +1447,7 @@ dependencies = [
  "gix-object",
  "gix-odb",
  "gix-pack",
+ "gix-packetline",
  "gix-path",
  "gix-pathspec",
  "gix-prompt",
