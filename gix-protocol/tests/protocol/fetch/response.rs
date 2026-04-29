@@ -21,20 +21,32 @@ mod v1 {
 
         #[cfg(feature = "async-client")]
         use futures_lite::io::AsyncReadExt;
-        use gix_protocol::fetch::{
-            self,
-            response::{Acknowledgement, ShallowUpdate},
-        };
+        use gix_protocol::fetch::{self, response::ShallowUpdate};
+        use gix_protocol::wire_types::{AckTrailer, Acknowledgments};
         use gix_transport::Protocol;
 
         use crate::fetch::response::{id, mock_reader};
+
+        /// Assert the parsed acknowledgments section matches
+        /// `expected_commons` + `expected_trailer`, and that the
+        /// section was explicitly emitted by the server (i.e. not
+        /// `None`).
+        fn assert_acks(
+            acks: Option<&Acknowledgments>,
+            expected_commons: &[gix_hash::ObjectId],
+            expected_trailer: Option<AckTrailer>,
+        ) {
+            let acks = acks.expect("acknowledgments section should be present");
+            assert_eq!(acks.common_oids.as_slice(), expected_commons);
+            assert_eq!(acks.trailer, expected_trailer);
+        }
 
         #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
         async fn clone() -> crate::Result {
             let mut provider = mock_reader("v1/clone-only.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V1, &mut reader, true, false).await?;
-            assert_eq!(r.acknowledgements(), &[Acknowledgement::Nak]);
+            assert_acks(r.acknowledgements(), &[], None);
             assert!(r.has_pack());
             let mut buf = Vec::new();
             let bytes_read = reader.read_to_end(&mut buf).await?;
@@ -51,7 +63,7 @@ mod v1 {
                 r.shallow_updates(),
                 &[ShallowUpdate::Shallow(id("808e50d724f604f69ab93c6da2919c014667bedb"))]
             );
-            assert_eq!(r.acknowledgements(), &[Acknowledgement::Nak]);
+            assert_acks(r.acknowledgements(), &[], None);
             assert!(r.has_pack());
             let mut buf = Vec::new();
             let bytes_read = reader.read_to_end(&mut buf).await?;
@@ -65,7 +77,7 @@ mod v1 {
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V1, &mut reader, true, false).await?;
             assert!(r.shallow_updates().is_empty());
-            assert_eq!(r.acknowledgements(), &[Acknowledgement::Nak]);
+            assert_acks(r.acknowledgements(), &[], None);
             assert!(r.has_pack());
             let mut buf = Vec::new();
             let bytes_read = reader.read_to_end(&mut buf).await?;
@@ -78,13 +90,14 @@ mod v1 {
             let mut provider = mock_reader("v1/fetch-unshallow.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V1, &mut reader, true, true).await?;
-            assert_eq!(
+            assert_acks(
                 r.acknowledgements(),
                 &[
-                    Acknowledgement::Common(id("f99771fe6a1b535783af3163eba95a927aae21d5")),
-                    Acknowledgement::Common(id("2d9d136fb0765f2e24c44a0f91984318d580d03b")),
-                    Acknowledgement::Common(id("dfd0954dabef3b64f458321ef15571cc1a46d552")),
-                ]
+                    id("f99771fe6a1b535783af3163eba95a927aae21d5"),
+                    id("2d9d136fb0765f2e24c44a0f91984318d580d03b"),
+                    id("dfd0954dabef3b64f458321ef15571cc1a46d552"),
+                ],
+                None,
             );
             assert_eq!(
                 r.shallow_updates(),
@@ -110,13 +123,15 @@ mod v1 {
             let r =
                 fetch::Response::from_line_reader(Protocol::V1, &mut provider.as_read_without_sidebands(), true, true)
                     .await?;
-            assert_eq!(
+            // NAK after ACK lines means "section present, no trailer";
+            // the two common oids accumulate into `common_oids`.
+            assert_acks(
                 r.acknowledgements(),
                 &[
-                    Acknowledgement::Common(id("47ee0b7fe4f3a7d776c78794873e6467e1c47e59")),
-                    Acknowledgement::Common(id("3f02c0ad360d96e8dbba92f97b42ebbaa4319db1")),
-                    Acknowledgement::Nak,
-                ]
+                    id("47ee0b7fe4f3a7d776c78794873e6467e1c47e59"),
+                    id("3f02c0ad360d96e8dbba92f97b42ebbaa4319db1"),
+                ],
+                None,
             );
             Ok(())
         }
@@ -126,15 +141,16 @@ mod v1 {
             let mut provider = mock_reader("v1/fetch.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V1, &mut reader, true, true).await?;
-            assert_eq!(
+            // ACK lines + "ready" + trailing NAK: commons accumulate,
+            // `ready` sets the trailer, trailing NAK leaves state alone.
+            assert_acks(
                 r.acknowledgements(),
                 &[
-                    Acknowledgement::Common(id("6504930888c9c5337e7e065c964f87b60d16a7d7")),
-                    Acknowledgement::Common(id("fe17165c392110d1305674c06e4aec35728bfab7")),
-                    Acknowledgement::Common(id("f22743895a3024bb0c958335981439f1fa747d57")),
-                    Acknowledgement::Ready,
-                    Acknowledgement::Nak,
-                ]
+                    id("6504930888c9c5337e7e065c964f87b60d16a7d7"),
+                    id("fe17165c392110d1305674c06e4aec35728bfab7"),
+                    id("f22743895a3024bb0c958335981439f1fa747d57"),
+                ],
+                Some(AckTrailer::Ready),
             );
             assert!(r.has_pack());
             let mut buf = Vec::new();
@@ -210,10 +226,8 @@ mod v2 {
 
         #[cfg(feature = "async-client")]
         use futures_lite::io::AsyncReadExt;
-        use gix_protocol::fetch::{
-            self,
-            response::{Acknowledgement, ShallowUpdate},
-        };
+        use gix_protocol::fetch::{self, response::ShallowUpdate};
+        use gix_protocol::wire_types::{AckTrailer, Acknowledgments};
         #[cfg(feature = "async-client")]
         use gix_transport::client::async_io::HandleProgress;
         #[cfg(feature = "blocking-client")]
@@ -221,6 +235,20 @@ mod v2 {
         use gix_transport::Protocol;
 
         use crate::fetch::response::{id, mock_reader};
+
+        /// Assert the parsed acknowledgments section matches
+        /// `expected_commons` + `expected_trailer`, and that the
+        /// section was explicitly emitted by the server (i.e. not
+        /// `None`).
+        fn assert_acks(
+            acks: Option<&Acknowledgments>,
+            expected_commons: &[gix_hash::ObjectId],
+            expected_trailer: Option<AckTrailer>,
+        ) {
+            let acks = acks.expect("acknowledgments section should be present");
+            assert_eq!(acks.common_oids.as_slice(), expected_commons);
+            assert_eq!(acks.trailer, expected_trailer);
+        }
 
         #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
         async fn clone() -> crate::Result {
@@ -236,7 +264,10 @@ mod v2 {
                 let mut provider = mock_reader(&fixture);
                 let mut reader = provider.as_read_without_sidebands();
                 let r = fetch::Response::from_line_reader(Protocol::V2, &mut reader, true, true).await?;
-                assert!(r.acknowledgements().is_empty(), "it should go straight to the packfile");
+                assert!(
+                    r.acknowledgements().is_none(),
+                    "v2 clone response should omit the acknowledgments section entirely"
+                );
                 assert!(r.has_pack());
                 reader.set_progress_handler(Some(Box::new(|_is_err, _text| std::ops::ControlFlow::Continue(()))));
                 let mut buf = Vec::new();
@@ -251,7 +282,7 @@ mod v2 {
             let mut provider = mock_reader("v2/clone-deepen-1.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V2, &mut reader, true, true).await?;
-            assert!(r.acknowledgements().is_empty(), "it should go straight to the packfile");
+            assert!(r.acknowledgements().is_none(), "it should go straight to the packfile");
             assert_eq!(
                 r.shallow_updates(),
                 &[ShallowUpdate::Shallow(id("808e50d724f604f69ab93c6da2919c014667bedb"))]
@@ -268,14 +299,14 @@ mod v2 {
             let mut provider = mock_reader("v2/fetch-unshallow.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V2, &mut reader, true, true).await?;
-            assert_eq!(
+            assert_acks(
                 r.acknowledgements(),
                 &[
-                    Acknowledgement::Common(id("f99771fe6a1b535783af3163eba95a927aae21d5")),
-                    Acknowledgement::Common(id("2d9d136fb0765f2e24c44a0f91984318d580d03b")),
-                    Acknowledgement::Common(id("dfd0954dabef3b64f458321ef15571cc1a46d552")),
-                    Acknowledgement::Ready,
-                ]
+                    id("f99771fe6a1b535783af3163eba95a927aae21d5"),
+                    id("2d9d136fb0765f2e24c44a0f91984318d580d03b"),
+                    id("dfd0954dabef3b64f458321ef15571cc1a46d552"),
+                ],
+                Some(AckTrailer::Ready),
             );
             assert_eq!(
                 r.shallow_updates(),
@@ -300,7 +331,7 @@ mod v2 {
             let mut provider = mock_reader("v2/clone-deepen-5.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V2, &mut reader, true, true).await?;
-            assert!(r.acknowledgements().is_empty(), "it should go straight to the packfile");
+            assert!(r.acknowledgements().is_none(), "it should go straight to the packfile");
             assert!(r.shallow_updates().is_empty(), "it should go straight to the packfile");
             assert!(r.has_pack());
             let mut pack = Vec::new();
@@ -314,7 +345,7 @@ mod v2 {
             let mut provider = mock_reader("v2/clone-only-2.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V2, &mut reader, true, true).await?;
-            assert!(r.acknowledgements().is_empty(), "it should go straight to the packfile");
+            assert!(r.acknowledgements().is_none(), "it should go straight to the packfile");
             assert!(r.has_pack());
 
             let mut buf = Vec::new();
@@ -339,7 +370,9 @@ mod v2 {
             let r =
                 fetch::Response::from_line_reader(Protocol::V2, &mut provider.as_read_without_sidebands(), true, true)
                     .await?;
-            assert_eq!(r.acknowledgements(), &[Acknowledgement::Nak]);
+            // v2 NAK response: section is present but has no commons
+            // and no trailer.
+            assert_acks(r.acknowledgements(), &[], None);
             Ok(())
         }
 
@@ -364,13 +397,13 @@ mod v2 {
             let mut provider = mock_reader("v2/fetch.response");
             let mut reader = provider.as_read_without_sidebands();
             let r = fetch::Response::from_line_reader(Protocol::V2, &mut reader, true, true).await?;
-            assert_eq!(
+            assert_acks(
                 r.acknowledgements(),
                 &[
-                    Acknowledgement::Common(id("190c3f6b2319c1f4ec854215533caf8623f8f870")),
-                    Acknowledgement::Common(id("97c5a932b3940a09683e924ef6a92b31a6f7c6de")),
-                    Acknowledgement::Ready,
-                ]
+                    id("190c3f6b2319c1f4ec854215533caf8623f8f870"),
+                    id("97c5a932b3940a09683e924ef6a92b31a6f7c6de"),
+                ],
+                Some(AckTrailer::Ready),
             );
             assert!(r.has_pack());
             let mut buf = Vec::new();

@@ -5,9 +5,10 @@ use gix_transport::{client, Protocol};
 
 use crate::fetch::{
     response,
-    response::{shallow_update_from_line, Acknowledgement, ShallowUpdate, WantedRef},
+    response::{append_ack_line, categorize_v1_line, shallow_update_from_line, ShallowUpdate, WantedRef},
     Response,
 };
+use crate::wire_types::Acknowledgments;
 
 async fn parse_v2_section<T>(
     line: &mut String,
@@ -27,6 +28,24 @@ async fn parse_v2_section<T>(
         false
     } else {
         // we are done, there is no pack
+        true
+    })
+}
+
+async fn parse_v2_acks_section(
+    line: &mut String,
+    reader: &mut (impl ExtendedBufRead<'_> + Unpin),
+    acks: &mut Option<Acknowledgments>,
+) -> Result<bool, response::Error> {
+    line.clear();
+    while reader.readline_str(line).await? != 0 {
+        append_ack_line(acks, line)?;
+        line.clear();
+    }
+    Ok(if reader.stopped_at() == Some(client::MessageKind::Delimiter) {
+        reader.reset(Protocol::V2);
+        false
+    } else {
         true
     })
 }
@@ -52,7 +71,7 @@ impl Response {
         match version {
             Protocol::V0 | Protocol::V1 => {
                 let mut line = String::new();
-                let mut acks = Vec::<Acknowledgement>::new();
+                let mut acknowledgments: Option<Acknowledgments> = None;
                 let mut shallows = Vec::<ShallowUpdate>::new();
                 let mut saw_ready = false;
                 let has_pack = 'lines: loop {
@@ -86,7 +105,9 @@ impl Response {
                         }
                     };
 
-                    if Response::parse_v1_ack_or_shallow_or_assume_pack(&mut acks, &mut shallows, &peeked_line) {
+                    let (this_line_was_nak, this_line_set_ready, stop_as_pack) =
+                        categorize_v1_line(&peeked_line, &mut acknowledgments, &mut shallows);
+                    if stop_as_pack {
                         break 'lines true;
                     }
                     assert_ne!(
@@ -95,8 +116,8 @@ impl Response {
                         "consuming a peeked line works"
                     );
                     // When the server sends ready, we know there is going to be a pack so no need to stop early.
-                    saw_ready |= matches!(acks.last(), Some(Acknowledgement::Ready));
-                    if let Some(Acknowledgement::Nak) = acks.last().filter(|_| !client_expects_pack || !saw_ready) {
+                    saw_ready |= this_line_set_ready;
+                    if this_line_was_nak && (!client_expects_pack || !saw_ready) {
                         if !wants_to_negotiate {
                             continue;
                         }
@@ -104,7 +125,7 @@ impl Response {
                     }
                 };
                 Ok(Response {
-                    acks,
+                    acknowledgments,
                     shallows,
                     wanted_refs: vec![],
                     has_pack,
@@ -114,7 +135,7 @@ impl Response {
                 // NOTE: We only read acknowledgements and scrub to the pack file, until we have use for the other features
                 let mut line = String::new();
                 reader.reset(Protocol::V2);
-                let mut acks = Vec::<Acknowledgement>::new();
+                let mut acknowledgments: Option<Acknowledgments> = None;
                 let mut shallows = Vec::<ShallowUpdate>::new();
                 let mut wanted_refs = Vec::<WantedRef>::new();
                 let has_pack = 'section: loop {
@@ -128,7 +149,7 @@ impl Response {
 
                     match line.trim_end() {
                         "acknowledgments" => {
-                            if parse_v2_section(&mut line, reader, &mut acks, Acknowledgement::from_line).await? {
+                            if parse_v2_acks_section(&mut line, reader, &mut acknowledgments).await? {
                                 break 'section false;
                             }
                         }
@@ -150,7 +171,7 @@ impl Response {
                     }
                 };
                 Ok(Response {
-                    acks,
+                    acknowledgments,
                     shallows,
                     wanted_refs,
                     has_pack,
@@ -159,3 +180,4 @@ impl Response {
         }
     }
 }
+

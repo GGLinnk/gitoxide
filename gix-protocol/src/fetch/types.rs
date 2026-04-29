@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use crate::fetch::response::{Acknowledgement, ShallowUpdate, WantedRef};
+use crate::fetch::response::{ShallowUpdate, WantedRef};
+use crate::wire_types::Acknowledgments;
 
 /// Options for use in [`fetch()`](`crate::fetch()`)
 #[derive(Debug, Clone)]
@@ -247,10 +248,12 @@ impl Tags {
     }
 }
 
-/// A representation of a complete fetch response
+/// A representation of a complete fetch response.
+//
+// TODO(2026-04-19): unify with `gix_protocol::wire_types::ServeResponse`.
 #[derive(Debug, Clone)]
 pub struct Response {
-    pub(crate) acks: Vec<Acknowledgement>,
+    pub(crate) acknowledgments: Option<Acknowledgments>,
     pub(crate) shallows: Vec<ShallowUpdate>,
     pub(crate) wanted_refs: Vec<WantedRef>,
     pub(crate) has_pack: bool,

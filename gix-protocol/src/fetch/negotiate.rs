@@ -452,22 +452,18 @@ pub fn one_round(
 ) -> Result<(Round, bool), Error> {
     let mut seen_ack = false;
     if let Some(response) = previous_response {
-        use crate::fetch::response::Acknowledgement;
-        for ack in response.acknowledgements() {
-            match ack {
-                Acknowledgement::Common(id) => {
-                    seen_ack = true;
-                    negotiator.in_common_with_remote(*id, graph)?;
-                    if let Some(common) = &mut state.common_commits {
-                        common.push(*id);
-                    }
+        if let Some(acks) = response.acknowledgements() {
+            for id in &acks.common_oids {
+                seen_ack = true;
+                negotiator.in_common_with_remote(*id, graph)?;
+                if let Some(common) = &mut state.common_commits {
+                    common.push(*id);
                 }
-                Acknowledgement::Ready => {
-                    // NOTE: In git, there is some logic dealing with whether to expect a DELIM or FLUSH package,
-                    //       but we handle this with peeking.
-                }
-                Acknowledgement::Nak => {}
             }
+            // NOTE: Ready-trailer: in git, there is some logic
+            // dealing with whether to expect a DELIM or FLUSH package,
+            // but we handle this with peeking. Empty `common_oids`
+            // encodes NAK on the wire - no state change needed.
         }
     }
 
