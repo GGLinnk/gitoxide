@@ -1,0 +1,56 @@
+[package]
+name = "gix-protocol-fuzz"
+version = "0.0.0"
+authors = ["Automatically generated"]
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.gix-protocol]
+path = ".."
+features = ["sha1", "push", "receive-pack-server", "upload-pack-server"]
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "parse_report_v1"
+path = "fuzz_targets/parse_report_v1.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_report_v2"
+path = "fuzz_targets/parse_report_v2.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_update_request"
+path = "fuzz_targets/parse_update_request.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_fetch_request_v2"
+path = "fuzz_targets/parse_fetch_request_v2.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_fetch_request_v1"
+path = "fuzz_targets/parse_fetch_request_v1.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "parse_ls_refs_request"
+path = "fuzz_targets/parse_ls_refs_request.rs"
+test = false
+doc = false
