@@ -47,3 +47,6 @@ pub use objects_impl::{objects, objects_unthreaded};
 pub mod objects {
     pub use super::objects_impl::{Error, ObjectExpansion, Options, Outcome};
 }
+
+pub mod push;
+pub use push::{objects_for_push, objects_for_push_with_filter, ObjectFilter};
