@@ -7,6 +7,75 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added — client-side push
+
+- `Remote::push(refspecs, progress, should_interrupt)` is the
+  one-call entry point. When the refspec list is empty it falls back
+  to `remote.<name>.push` and then to `push.default` (all five
+  policies: `nothing` / `current` / `matching` / `upstream` /
+  `simple`, reusing the existing `branch_remote_ref_name` machinery).
+- `Connection::<…, PushConnection>::prepare_push` returns a `#[must_use]`
+  `Prepare` builder with `with_refspecs`,
+  `with_remote_push_specs(remote)`, `with_atomic`, `with_quiet`,
+  `with_push_options`, `with_dry_run`, `commands`, `has_capability`,
+  `can_use_atomic`, and `send_with_generated_pack` /
+  `send(write_pack)` send methods.
+- `Repository::write_pack_for_push` wraps the pack-counting +
+  `iter_from_counts` + `FromEntriesIter` pipeline so callers without
+  a full `Prepare` chain can still assemble a push-ready pack.
+- `resolve_refspecs_to_commands` (pure helper) expands literal
+  shapes (`src:dst`, `src`, `:dst`) plus symmetric wildcards
+  (`refs/heads/*:refs/heads/*`) into concrete `Command`s against the
+  handshake's advertised refs.
+- Haves for the thin-pack include every handshake-advertised ref
+  rather than only matched refs, so delta bases shared with any
+  remote tip are reused.
+
+### Added — server-side serve endpoints
+
+- Feature `serve-upload-pack`:
+  - `Repository::serve_upload_pack_info_refs[_v2]` emit v0/v1/v2
+    advertisements for smart-HTTP `info/refs?service=git-upload-pack`.
+  - `Repository::serve_pack_upload_v2` drives a v2 fetch round with a
+    caller-supplied negotiator.
+  - `Repository::serve_pack_upload_v2_auto` drives the same round
+    with automatic pack generation, honouring `want` + `want-ref`,
+    `include-tag` (annotated tags whose peeled target lands in the
+    pack are appended), and `filter=blob:none` /
+    `filter=blob:limit=<n>[k|m|g]`.
+  - `Repository::serve_pack_upload_v1_auto` covers the v0/v1
+    stateless-RPC case with the same capability coverage.
+  - `Repository::serve_pack_upload_v2_dispatch_auto` answers
+    `command=ls-refs` + `command=fetch` in one call via
+    `upload_pack::dispatch_v2`.
+- Feature `serve-receive-pack`:
+  - `Repository::serve_receive_pack_info_refs` for the push-side
+    advertisement.
+  - `Repository::serve_pack_receive_delete_only` applies the update-
+    request to the ref store for feature builds without pack
+    generation.
+  - `Repository::serve_pack_receive` ingests the pack through
+    `gix_pack::Bundle::write_to_directory`, runs a reachability
+    connectivity walk per new tip, and applies ref updates with
+    `MustExistAndMatch` on each old tip. Populates the v2
+    `old-oid` / `new-oid` / `forced-update` trailers; forced-update
+    is detected through an ancestry walk.
+  - `Repository::serve_pack_receive_with_hooks` accepts a
+    `ServeHooks` value with pre-receive / update / post-receive
+    closures and surfaces the push-options section to each.
+  - Atomic pushes are now all-or-nothing: a rejection from the
+    update hook short-circuits the ref updater, and an internal
+    rejection (invalid refname, missing object, connectivity
+    failure) flips sibling Ok outcomes to Rejected before the ref
+    transaction runs.
+  - `Repository::walk_reachable_for_connectivity` and
+    `Repository::is_forced_update` are public so callers who drive
+    `gix_protocol::receive_pack::serve_with_hooks` directly - for
+    example to rewrite refnames and emit the `option refname`
+    trailer - can reuse the same ancestry walk + connectivity check
+    the built-in endpoint uses.
+  - `ServePackReceiveOutcome` is `#[must_use]`.
+
 ### Bug Fixes
 
  - <csr-id-4773fd171ec12db75761052d8a5de4dc513f71ff/> Correctly use `$COMMON_DIR/info/exclude` to make excludes work in worktrees.
