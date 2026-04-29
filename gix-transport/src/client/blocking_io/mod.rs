@@ -6,6 +6,8 @@ pub mod file;
 ///
 #[cfg(feature = "http-client")]
 pub mod http;
+///
+pub mod in_process;
 
 mod bufread_ext;
 pub use bufread_ext::{ExtendedBufRead, HandleProgress, ReadlineBufRead};
