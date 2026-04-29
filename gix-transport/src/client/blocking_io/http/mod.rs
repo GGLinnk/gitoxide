@@ -553,3 +553,140 @@ pub fn connect<H: Http + Default>(url: gix_url::Url, desired_version: Protocol, 
 ///
 #[cfg(any(feature = "http-client-curl", feature = "http-client-reqwest"))]
 pub mod redirect;
+
+/// Extract a human-readable diagnostic from the body of a failing smart-HTTP
+/// response, prefixing each extracted line with `remote: ` the way git does.
+///
+/// Git servers that reject a request (403, 404, 500, ...) typically include
+/// pkt-line-framed `ERR <message>` entries in the response body, sometimes
+/// sprinkled with side-band-2 progress messages (`\x02<message>`) that carry
+/// contextual hints like "You don't have push access". Surfacing those lets
+/// the user see — without turning on trace logging — the same
+/// `remote: Permission to X/Y.git denied to Z.` message `git push` prints.
+///
+/// Non-pkt-line bodies (plain-text error pages, HTML) fall back to a
+/// verbatim excerpt of the first ~512 bytes so HTML bodies from
+/// misconfigured proxies still give the user a clue instead of a bare
+/// status code.
+#[cfg(any(feature = "http-client-curl", feature = "http-client-reqwest"))]
+pub(crate) fn format_server_error_body(body: &[u8]) -> Option<String> {
+    if body.is_empty() {
+        return None;
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut cursor: &[u8] = body;
+    let mut decoded_something = false;
+    while !cursor.is_empty() {
+        match gix_packetline::decode::streaming(cursor) {
+            Ok(gix_packetline::decode::Stream::Complete { line, bytes_consumed }) => {
+                decoded_something = true;
+                if let Some(mut data) = line.as_slice() {
+                    while data.last() == Some(&b'\n') || data.last() == Some(&b'\r') {
+                        data = &data[..data.len() - 1];
+                    }
+                    if data.is_empty() {
+                        cursor = &cursor[bytes_consumed..];
+                        continue;
+                    }
+                    // ERR <msg>: fatal error payload git-server responses use.
+                    let payload: &[u8] = if let Some(rest) = data.strip_prefix(b"ERR ") {
+                        rest
+                    // Band 2 = progress/info, band 3 = fatal side-band error.
+                    // Band 1 data in an error response is unusual; include it verbatim if seen.
+                    } else if matches!(data.first(), Some(&1) | Some(&2) | Some(&3)) {
+                        &data[1..]
+                    } else {
+                        data
+                    };
+                    if !payload.is_empty() {
+                        lines.push(format!("remote: {}", String::from_utf8_lossy(payload)));
+                    }
+                }
+                cursor = &cursor[bytes_consumed..];
+            }
+            _ => break,
+        }
+    }
+    if !lines.is_empty() {
+        return Some(lines.join("\n"));
+    }
+    if decoded_something {
+        return None;
+    }
+    // Non-pkt-line body — most often a plain-text error or HTML page.
+    // Include a short excerpt so the user sees *something* actionable.
+    const EXCERPT_LEN: usize = 512;
+    let excerpt = &body[..body.len().min(EXCERPT_LEN)];
+    let text = String::from_utf8_lossy(excerpt);
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+#[cfg(all(test, any(feature = "http-client-curl", feature = "http-client-reqwest")))]
+mod format_server_error_body_tests {
+    use super::format_server_error_body;
+
+    fn encoded(line: &str) -> Vec<u8> {
+        let mut out = Vec::new();
+        gix_packetline::blocking_io::encode::data_to_write(line.as_bytes(), &mut out).expect("encode");
+        out
+    }
+
+    #[test]
+    fn empty_body_returns_none() {
+        assert!(format_server_error_body(b"").is_none());
+    }
+
+    #[test]
+    fn plain_text_body_returns_verbatim_excerpt() {
+        // Not pkt-line framed — a reverse-proxy 502 page or similar.
+        // Should come back excerpted and trimmed.
+        let body = b"  upstream reset connection  \n";
+        assert_eq!(
+            format_server_error_body(body).unwrap(),
+            "upstream reset connection"
+        );
+    }
+
+    #[test]
+    fn pkt_line_err_entry_is_surfaced_with_remote_prefix() {
+        // Shape of what GitHub sends on a 403: a single pkt-line
+        // carrying `ERR <reason>`. Matches `git push`'s
+        // `remote: <reason>` output shape.
+        let body = encoded("ERR Permission to GGLinnk/gitoxide.git denied to someone.\n");
+        assert_eq!(
+            format_server_error_body(&body).unwrap(),
+            "remote: Permission to GGLinnk/gitoxide.git denied to someone."
+        );
+    }
+
+    #[test]
+    fn multiple_pkt_line_entries_are_joined_by_newlines() {
+        // Multi-line rejections show up when a server sends context
+        // plus an ERR line; all of them should make it through.
+        let mut body = encoded("You cannot push to this repository.\n");
+        body.extend(encoded("ERR access denied\n"));
+        let out = format_server_error_body(&body).unwrap();
+        assert!(out.contains("remote: You cannot push to this repository."));
+        assert!(out.contains("remote: access denied"));
+    }
+
+    #[test]
+    fn side_band_2_progress_byte_is_stripped() {
+        // Some servers wrap hints in side-band channel 2 inside the
+        // pkt-line body. The band byte must not leak into the user
+        // message.
+        let mut band_two = vec![2u8];
+        band_two.extend_from_slice(b"check your SSH key");
+        let mut body = Vec::new();
+        gix_packetline::blocking_io::encode::data_to_write(&band_two, &mut body).expect("encode");
+        assert_eq!(
+            format_server_error_body(&body).unwrap(),
+            "remote: check your SSH key"
+        );
+    }
+}

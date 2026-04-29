@@ -82,11 +82,29 @@ impl Default for Remote {
             for Request {
                 url,
                 base_url,
-                headers,
+                mut headers,
                 upload_body_kind,
                 config,
             } in req_recv
             {
+                // Merge `Options::extra_headers` (the `http.extraHeader` git-config multi-var)
+                // into the request header map. This matches the curl backend's behaviour and
+                // is a prerequisite for bearer-token HTTP auth, which the push flow needs.
+                // Malformed entries are silently dropped per the permissive contract
+                // documented on `Options::extra_headers`.
+                for header_line in &config.extra_headers {
+                    let Some(colon_pos) = header_line.find(':') else {
+                        continue;
+                    };
+                    let name = &header_line[..colon_pos];
+                    let value = header_line[colon_pos + 1..].trim();
+                    if let Some((key, val)) = reqwest::header::HeaderName::from_str(name)
+                        .ok()
+                        .zip(reqwest::header::HeaderValue::try_from(value).ok())
+                    {
+                        headers.append(key, val);
+                    }
+                }
                 let effective_url = redirect::swap_tails(redirected_base_url.as_deref(), &base_url, url.clone());
                 let mut req_builder = if upload_body_kind.is_some() {
                     client.post(&effective_url)
@@ -137,30 +155,42 @@ impl Default for Remote {
                     *follow = FollowRedirects::None;
                 }
 
-                let mut res = match client
-                    .execute(req)
-                    .and_then(reqwest::blocking::Response::error_for_status)
-                {
+                let mut res = match client.execute(req) {
                     Ok(res) => res,
                     Err(err) => {
-                        let (kind, err) = match err.status() {
-                            Some(status) => {
-                                let kind = if status == reqwest::StatusCode::UNAUTHORIZED {
-                                    std::io::ErrorKind::PermissionDenied
-                                } else if status.is_server_error() {
-                                    std::io::ErrorKind::ConnectionAborted
-                                } else {
-                                    std::io::ErrorKind::Other
-                                };
-                                (kind, format!("Received HTTP status {}", status.as_str()))
-                            }
-                            None => (std::io::ErrorKind::Other, err.to_string()),
-                        };
-                        let err = Err(std::io::Error::new(kind, err));
+                        let err = Err(std::io::Error::other(err.to_string()));
                         headers_tx.channel.send(err).ok();
                         continue;
                     }
                 };
+                let status = res.status();
+                if status.is_client_error() || status.is_server_error() {
+                    let kind = if status == reqwest::StatusCode::UNAUTHORIZED
+                        || status == reqwest::StatusCode::FORBIDDEN
+                    {
+                        std::io::ErrorKind::PermissionDenied
+                    } else if status.is_server_error() {
+                        std::io::ErrorKind::ConnectionAborted
+                    } else {
+                        std::io::ErrorKind::Other
+                    };
+                    // Drain the response body before surfacing the error so
+                    // we can pull out git's pkt-line-framed `ERR <msg>` and
+                    // side-band-2 hints (matching what `git push` shows as
+                    // `remote: <message>`). Without this, users see a bare
+                    // "Received HTTP status 403" with no clue whether the
+                    // server rejected the auth, the ref, or something else.
+                    let mut body_bytes = Vec::new();
+                    let _ = res.copy_to(&mut body_bytes);
+                    let detail = crate::client::blocking_io::http::format_server_error_body(&body_bytes);
+                    let message = match detail {
+                        Some(d) => format!("Received HTTP status {}\n{}", status.as_str(), d),
+                        None => format!("Received HTTP status {}", status.as_str()),
+                    };
+                    let err = Err(std::io::Error::new(kind, message));
+                    headers_tx.channel.send(err).ok();
+                    continue;
+                }
 
                 let actual_url = res.url().as_str();
                 if actual_url != effective_url.as_str() {
