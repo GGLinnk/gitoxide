@@ -53,6 +53,31 @@ fetch = [
     "dep:gix-trace",
 ]
 
+## Add client-side primitives for performing a `push`: ref-update `Command`
+## serialization, `Arguments` capability negotiation, blocking + async
+## `send` that streams command lines plus the pack writer, and
+## `response::from_reader` with side-band demux + typed
+## `Outcome::{is_success, accepted_count, rejected_count, command_statuses}`
+## helpers over the parsed `report-status` / `report-status-v2` variants.
+push = []
+
+## Add server-side primitives for `git-upload-pack`: parsing a v2
+## `command=fetch` / `command=ls-refs` request, the v0/v1 stateless
+## `want`/`have`/`done` state machine, the `ls-refs` / `fetch`
+## advertisements, `ack` / `packfile` section emitters, and a `serve_v2`
+## / `serve_v1` dispatch that reads pkt-lines and drives a caller-owned
+## object store + pack writer.
+upload-pack-server = ["dep:gix-packetline", "gix-packetline/blocking-io"]
+
+## Add server-side primitives for `git-receive-pack`: advertisement of
+## current refs + push capabilities, parsing of the framed update-request
+## (old/new-oid + refname + inline caps + optional `shallow <oid>` and
+## `push-cert` block), atomic multi-update dispatch with caller-supplied
+## hooks and atomic-all-or-nothing semantics, and v1/v2 `report-status`
+## serialisation. Reuses the `push` feature for the shared `Command` /
+## `Report` / `CommandStatus` types.
+receive-pack-server = ["push", "dep:gix-packetline", "gix-packetline/blocking-io"]
+
 #! ### Other
 ## Enable support for the SHA-1 hash by enabling the respective feature in the `gix-hash` crate.
 sha1 = ["gix-hash/sha1"]
@@ -68,6 +93,11 @@ required-features = ["blocking-client"]
 name = "async"
 path = "tests/async-protocol.rs"
 required-features = ["async-client"]
+
+[[test]]
+name = "push-receive-roundtrip"
+path = "tests/push-receive-roundtrip.rs"
+required-features = ["push", "upload-pack-server", "receive-pack-server", "blocking-client", "sha1"]
 
 [dependencies]
 gix-features = { version = "^0.46.2", path = "../gix-features", features = [
@@ -87,6 +117,7 @@ gix-revwalk = { version = "^0.29.0", path = "../gix-revwalk", optional = true }
 gix-credentials = { version = "^0.37.1", path = "../gix-credentials", optional = true }
 gix-refspec = { version = "^0.39.0", path = "../gix-refspec", optional = true }
 gix-lock = { version = "^21.0.0", path = "../gix-lock", optional = true }
+gix-packetline = { version = "^0.21.2", path = "../gix-packetline", optional = true }
 
 thiserror = "2.0.18"
 nonempty = "0.12.0"
