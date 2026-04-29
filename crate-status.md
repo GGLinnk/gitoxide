@@ -157,7 +157,7 @@ The top-level crate that acts as hub to all functionality provided by the `gix-*
             * [x] 'ref-in-want'
             * [ ] 'wanted-ref'
             * [x] standard negotiation algorithms `consecutive`, `skipping` and `noop`.
-        * [ ] push
+        * [x] push
         * [x] ls-refs
         * [x] ls-refs with ref-spec filter
         * [x] list, find by name
@@ -554,11 +554,40 @@ Provide a native SSH transport and authentication backend so `gix` users can shi
     * [x] packfile negotiation
         * [x] delegate can support for all fetch features, including shallow, deepen, etc.
         * [x] receive parsed shallow refs
-* [ ] push
-    * [ ] send-pack / receive-pack client plumbing
-    * [ ] report-status, sideband, delete-refs, push-options and atomic pushes
-    * [ ] object-format negotiation
-* [ ] upload-pack / receive-pack server plumbing for in-process transports
+* [x] push (feature `push`)
+    * [x] `Command` + `Arguments` wire types
+    * [x] blocking + async `send`
+    * [x] `report-status` v1 / v2 parser with `option` trailers
+    * [x] `Outcome` helpers: `is_success` / `accepted_count` / `rejected_count` / `command_statuses`
+    * [x] `prepare_push` builder: refspecs / atomic / quiet / push-options / dry_run
+    * [x] `write_pack_for_push` — non-thin, multi-have exclusion
+    * [x] refspec resolver — literal + symmetric wildcards
+    * [x] `Remote::push` one-call + `push.default` fallback (nothing / current / matching / upstream / simple)
+    * [x] caps: delete-refs / atomic / quiet / push-options / side-band-64k / ofs-delta
+    * [x] object-format advertised + echoed
+    * [x] round-trip test + opt-in `test-with-real-git`
+    * [ ] push-cert emission
+* [x] upload-pack / receive-pack server plumbing for in-process transports
+    * [x] upload-pack v1 / v2 advertisement + `Options` (feature `upload-pack-server`)
+    * [x] upload-pack v2 fetch parser — want / have / done / filter / deepen / shallow
+    * [x] upload-pack v2 ls-refs parser + response + `dispatch_v2`
+    * [x] upload-pack ACK / NAK / ready + packfile + side-band-64k
+    * [x] upload-pack auto: `serve_pack_upload_v2_auto` / `_v1_auto` / `_v2_dispatch_auto`
+    * [x] upload-pack v0 / v1 stateless + stateful (MultiAck / MultiAckDetailed / legacy)
+    * [x] receive-pack update-request parser + v1 / v2 `report-status` emitter (feature `receive-pack-server`)
+    * [x] receive-pack serve — `Bundle::write_to_directory` + connectivity walk + `MustExistAndMatch`
+    * [x] receive-pack hooks — pre-receive / update / post-receive + delete-only minimal path
+    * [x] receive-pack v2 trailers — old-oid / new-oid / forced-update
+    * [x] receive-pack push-options drained + surfaced on `ServeOutcome` + hooks
+    * [x] receive-pack atomic all-or-nothing across hook + updater rejections
+    * [x] receive-pack push-cert parsed + surfaced raw (verification out of scope)
+    * [x] `option refname` via `serve_with_hooks` + public `walk_reachable_for_connectivity` / `is_forced_update`
+    * [x] in-process Transport — `pipe` / `spawn_server` / `ChannelReader` / `ChannelWriter` + `in_process_{receive,upload}_pack_*`
+    * [x] object-format both sides
+    * [x] filter=blob:none / filter=blob:limit on auto paths
+    * [ ] filter=tree:N (N≥1) / filter=sparse
+    * [ ] gix-level auto-driver for stateful v0 / v1 over git://
+    * [ ] async HTTP transport
 * [ ] bundle-uri protocol integration
 * [ ] remote helper protocol and integration
 * [x] API documentation
@@ -601,7 +630,7 @@ Provide a native SSH transport and authentication backend so `gix` users can shi
 * [x] parse
 * [x] matching of references and object names
     * [x] for fetch
-    * [ ] for push
+    * [x] for push
 
 ### gix-command
 * [x] execute commands directly

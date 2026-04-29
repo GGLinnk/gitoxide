@@ -5,6 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added — client-side push (feature `push`)
+
+- `push::command::{Command, Arguments}` emit the wire-level
+  `<old-oid> <new-oid> <refname>\0<capabilities>` sequence per the git
+  pack-protocol spec. Capability toggles: `report-status`,
+  `report-status-v2`, `side-band-64k`, `atomic`, `ofs-delta`, `quiet`,
+  `delete-refs`, `push-options`.
+- `push::report_status::{parse_report_v1, parse_report_v2, Report,
+  ReportV2, UnpackStatus, CommandStatus, CommandStatusV2,
+  CommandOptions}` parse the server's `report-status` /
+  `report-status-v2` response into typed values.
+- `push::response::{Outcome, from_reader}` wraps side-band demux plus
+  report parsing. `Outcome` is `#[must_use]` and carries
+  `unpack_ok`, `accepted_count`, `rejected_count`, `is_success`, and
+  `command_statuses()` for ergonomic outcome inspection.
+- Blocking + async `push::Arguments::send` streams the framed
+  update-request plus the caller's pack, behind the
+  `blocking-client` / `async-client` features.
+
+### Added — server-side upload-pack (feature `upload-pack-server`)
+
+- `upload_pack::advertisement` emits v0/v1/v2 ref advertisements for
+  smart-HTTP `info/refs?service=git-upload-pack` endpoints.
+- `upload_pack::{fetch_request, ls_refs_request, ls_refs_response,
+  ack}` parse + emit the v2 request/response framing.
+- `upload_pack::serve_v2` drives a single v2 `command=fetch` round
+  with caller-supplied negotiation + pack-writer closures;
+  `dispatch_v2` layers on v2 `command=ls-refs` routing.
+- `upload_pack::{fetch_request_v1, serve_v1}` cover the v0/v1
+  stateless-RPC case: parse the upload-request (wants, haves,
+  shallow, deepen, filter, first-line capabilities) and emit
+  `NAK` + pack.
+- Outcome types are `#[must_use]`.
+
+### Added — server-side receive-pack (feature `receive-pack-server`)
+
+- `receive_pack::advertisement` emits the push-side v1 ref
+  advertisement with push capabilities (`report-status`,
+  `report-status-v2`, `delete-refs`, `atomic`, `quiet`,
+  `side-band-64k`, `ofs-delta`, optional `push-options`).
+- `receive_pack::commands::parse_request` (doc-aliased to
+  `update-request`) parses the client's update-request into typed
+  `Command`s plus `RequestedCapabilities`.
+- `receive_pack::report::{emit_v1, emit_v2}` serialise the
+  `report-status` / `report-status-v2` response including the v2
+  `option refname` / `option old-oid` / `option new-oid` /
+  `option forced-update` trailers.
+- `receive_pack::{serve, serve_with_hooks}` drive the full state
+  machine: parse the update-request, drain the optional push-options
+  section, invoke caller `pre_receive` / `update` / `post_receive`
+  hooks, delegate pack ingestion and ref application to caller
+  closures, and emit v1 or v2 report based on what the client
+  negotiated.
+- `atomic` is now correctly all-or-nothing: a rejection by the
+  update hook short-circuits the ref updater entirely, and sibling
+  outcomes cite the atomic policy in their rejection reason.
+- `ServeOutcome::push_options` surfaces the parsed push-options to
+  the caller; hooks receive them as their second argument.
+
+### Added — documentation and discoverability
+
+- Module-layout doc maps on every new public module.
+- `#[doc(alias)]` routing on every parser / emitter / state machine
+  so rustdoc queries for `git push` / `git upload-pack` /
+  `git receive-pack` / `info/refs` / `report-status` /
+  `report-status-v2` / `command=fetch` / `command=ls-refs` /
+  `update-request` / `upload-request` / `refspec` resolve to the
+  right item.
+
 ## 0.57.0 (2026-02-10)
 
 ### Commit Statistics

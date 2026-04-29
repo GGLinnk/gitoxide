@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added — push-side pack counting
+
+- `data::output::count::objects_for_push` emits one
+  `data::output::Count` per object that should ship in a pack for a
+  `git push`: follows tag chains, walks commits + trees with
+  multi-have boundary exclusion, and dedups via a shared `seen` set.
+  Builds on top of the existing `gix_traverse::tree::breadthfirst`
+  walker.
+- `data::output::count::objects_for_push_with_filter` accepts an
+  `ObjectFilter` for partial-clone semantics:
+  - `ObjectFilter::None` ships every reachable object (the original
+    behaviour).
+  - `ObjectFilter::BlobsNone` drops every blob, matching the wire
+    `filter=blob:none` directive.
+  - `ObjectFilter::BlobsAtLeast(u64)` drops blobs whose decoded size
+    meets or exceeds the limit, matching `filter=blob:limit=<n>`.
+
 ## 0.66.0 (2026-02-10)
 
 ### Commit Statistics
