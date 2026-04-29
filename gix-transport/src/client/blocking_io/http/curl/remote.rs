@@ -31,6 +31,17 @@ struct Handler {
     checked_status: bool,
     last_status: usize,
     follow: FollowRedirects,
+    /// When the first header line reveals a 4xx / 5xx status we stash
+    /// the eventual error kind + short message here instead of
+    /// dispatching it through `send_header` right away. Holding the
+    /// error lets the body-buffering path below collect the server's
+    /// pkt-line-framed `ERR <msg>` / side-band hints so we can merge
+    /// them into the final message the caller sees — matching
+    /// `git push`'s `remote: <message>` output shape.
+    pending_error: Option<(io::ErrorKind, String)>,
+    /// Bounded in-memory buffer for the response body on error-status
+    /// responses. Only populated while `pending_error` is `Some`.
+    error_body: Vec<u8>,
 }
 
 impl Handler {
@@ -38,6 +49,8 @@ impl Handler {
         self.checked_status = false;
         self.last_status = 0;
         self.follow = FollowRedirects::default();
+        self.pending_error = None;
+        self.error_body.clear();
     }
     fn parse_status_inner(data: &[u8]) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
         let code = data
@@ -64,6 +77,22 @@ impl Handler {
 
 impl curl::easy::Handler for Handler {
     fn write(&mut self, data: &[u8]) -> Result<usize, curl::easy::WriteError> {
+        // Error-response body: accumulate up to a cap so we can hand
+        // the pkt-line-decoded `remote: <message>` lines back to the
+        // caller along with the status. Keep `send_header` alive so
+        // the deferred error can still be delivered through it after
+        // `perform()` finishes. The body ultimately goes nowhere else
+        // — the caller bailed on the header error — so nothing is
+        // lost by not writing to `send_data`.
+        if self.pending_error.is_some() {
+            const MAX_ERR_BODY: usize = 8 * 1024;
+            let remaining = MAX_ERR_BODY.saturating_sub(self.error_body.len());
+            if remaining > 0 {
+                let to_copy = data.len().min(remaining);
+                self.error_body.extend_from_slice(&data[..to_copy]);
+            }
+            return Ok(data.len());
+        }
         drop(self.send_header.take()); // signal header readers to stop trying
         match self.send_data.as_mut() {
             Some(writer) => writer.write_all(data).map(|_| data.len()).or(Ok(0)),
@@ -81,25 +110,32 @@ impl curl::easy::Handler for Handler {
     fn header(&mut self, data: &[u8]) -> bool {
         if let Some(writer) = self.send_header.as_mut() {
             if self.checked_status {
-                writer.write_all(data).ok();
+                // Subsequent header lines. When an error status was
+                // deferred we skip forwarding response headers to the
+                // caller — the eventual error will carry the body's
+                // context.
+                if self.pending_error.is_none() {
+                    writer.write_all(data).ok();
+                }
             } else {
                 self.checked_status = true;
                 self.last_status = 200;
                 if let Some((status, err)) = Handler::parse_status(data, self.follow) {
                     self.last_status = status;
-                    writer
-                        .channel
-                        .send(Err(io::Error::new(
-                            if status == 401 {
-                                io::ErrorKind::PermissionDenied
-                            } else if (500..600).contains(&status) {
-                                io::ErrorKind::ConnectionAborted
-                            } else {
-                                io::ErrorKind::Other
-                            },
-                            err,
-                        )))
-                        .ok();
+                    let kind = if status == 401 || status == 403 {
+                        io::ErrorKind::PermissionDenied
+                    } else if (500..600).contains(&status) {
+                        io::ErrorKind::ConnectionAborted
+                    } else {
+                        io::ErrorKind::Other
+                    };
+                    // Stash the error; do NOT send it through the
+                    // header channel yet. `write()` will collect the
+                    // response body into `error_body`, and the
+                    // post-`perform()` hook in `new()` below will
+                    // merge body context into the message before
+                    // delivering the final error to the caller.
+                    self.pending_error = Some((kind, err.to_string()));
                 }
             }
         }
@@ -347,6 +383,23 @@ pub fn new() -> (
                     } else {
                         action.erase()
                     })?;
+                }
+                // Deliver the deferred error when the transport-level
+                // `perform()` succeeded but the HTTP status was 4xx /
+                // 5xx. At this point `error_body` holds the server's
+                // pkt-line-framed `ERR <msg>` / side-band hints, so
+                // the caller sees `remote: Permission to X denied to Y`
+                // the way `git push` does, not just the bare status.
+                if let Some((kind, status_msg)) = handler.pending_error.take() {
+                    let body = std::mem::take(&mut handler.error_body);
+                    let detail = http::format_server_error_body(&body);
+                    let message = match detail {
+                        Some(d) => format!("{status_msg}\n{d}"),
+                        None => status_msg,
+                    };
+                    if let Some(header) = handler.send_header.take() {
+                        header.channel.try_send(Err(io::Error::new(kind, message))).ok();
+                    }
                 }
                 handler.reset();
                 handler.receive_body.take();
