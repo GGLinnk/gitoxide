@@ -13,6 +13,14 @@ mod object;
 mod open;
 #[cfg(feature = "attributes")]
 mod pathspec;
+#[cfg(all(feature = "blocking-network-client", feature = "serve-upload-pack"))]
+mod fetch_pack;
+#[cfg(any(feature = "serve-upload-pack", feature = "serve-receive-pack"))]
+mod in_process_transport;
+#[cfg(feature = "blocking-network-client")]
+mod push_pack;
+#[cfg(feature = "serve-receive-pack")]
+mod serve;
 mod reference;
 mod remote;
 mod shallow;
