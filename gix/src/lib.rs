@@ -220,6 +220,10 @@ pub mod progress;
 pub mod push;
 
 ///
+#[cfg(any(feature = "serve-upload-pack", feature = "serve-receive-pack"))]
+pub mod in_process_transport;
+
+///
 pub mod diff;
 
 ///

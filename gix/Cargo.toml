@@ -201,6 +201,30 @@ worktree-stream = ["gix-worktree-stream", "attributes"]
 ## Your application should add it as dependency and re-activate the desired features.
 worktree-archive = ["gix-archive", "worktree-stream", "attributes"]
 
+## Expose server-side `git-upload-pack` endpoints on `Repository`:
+## `serve_upload_pack_info_refs` / `_v2`, `serve_pack_upload_v1_auto`,
+## `serve_pack_upload_v2_auto`, `serve_pack_upload_v2_dispatch_auto`,
+## and the lower-level `serve_pack_upload_v2` that accepts a custom
+## negotiator. Drives `gix_protocol::upload_pack` over a caller-owned
+## `Read` + `Write` pair.
+serve-upload-pack = ["parallel", "gix-protocol/upload-pack-server", "gix-pack/generate"]
+
+## Enable integration tests that shell out to the reference `git`
+## binary for cross-validation (e.g. the in-process push test walks
+## the resulting destination with `git log` to catch bit-level
+## divergences). These tests are opt-in so builds without a `git`
+## binary on `$PATH` still pass `cargo test`.
+test-with-real-git = []
+
+## Expose server-side `git-receive-pack` endpoints on `Repository`:
+## `serve_receive_pack_info_refs`, `serve_pack_receive`,
+## `serve_pack_receive_with_hooks` (with pre-receive / update /
+## post-receive hook callbacks), and
+## `serve_pack_receive_delete_only`. Ingests the incoming pack via
+## `gix_pack::Bundle::write_to_directory`, verifies connectivity, and
+## applies the ref updates atomically.
+serve-receive-pack = ["parallel", "gix-protocol/receive-pack-server", "gix-pack/streaming-input"]
+
 #! #### Mutually Exclusive Network Client
 #!
 #! Either `async-*` or `blocking-*` versions of these toggles may be enabled at a time.
@@ -210,7 +234,9 @@ worktree-archive = ["gix-archive", "worktree-stream", "attributes"]
 ## Make `gix-protocol` available along with an async client.
 async-network-client = [
     "gix-protocol/async-client",
+    "gix-protocol/push",
     "gix-pack/streaming-input",
+    "gix-pack/generate",
     "dep:gix-transport",
     "attributes",
     "credentials",
@@ -224,7 +250,9 @@ async-network-client-async-std = [
 ## Make `gix-protocol` available along with a blocking client, providing access to the `file://`, `git://` and `ssh://` transports.
 blocking-network-client = [
     "gix-protocol/blocking-client",
+    "gix-protocol/push",
     "gix-pack/streaming-input",
+    "gix-pack/generate",
     "dep:gix-transport",
     "attributes",
     "credentials",
@@ -458,6 +486,8 @@ gix = { path = ".", default-features = false, features = [
     "need-more-recent-msrv", "tree-error"
 ] }
 gix-hash = { version = "^0.23.0", path = "../gix-hash", features = ["sha256"] }
+gix-packetline = { path = "../gix-packetline", version = "^0.21.2", features = ["blocking-io"] }
+bstr = { version = "1.12.0", default-features = false, features = ["std", "unicode"] }
 pretty_assertions = "1.4.0"
 gix-testtools = { path = "../tests/tools" }
 is_ci = "1.1.1"
