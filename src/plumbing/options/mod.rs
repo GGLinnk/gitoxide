@@ -123,6 +123,9 @@ pub enum Subcommands {
     /// Clone a repository into a new directory.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Clone(clone::Platform),
+    /// Push refs and objects to a remote.
+    #[cfg(feature = "gitoxide-core-blocking-client")]
+    Push(push::Platform),
     /// Interact with the mailmap.
     #[clap(subcommand)]
     Mailmap(mailmap::Subcommands),
@@ -732,6 +735,50 @@ pub mod clone {
                 Shallow::default()
             }
         }
+    }
+}
+
+#[cfg(feature = "gitoxide-core-blocking-client")]
+pub mod push {
+    #[derive(Debug, clap::Parser)]
+    pub struct Platform {
+        /// Prepare the push and validate the refspecs, but don't send a pack or ask the remote to update refs.
+        #[clap(long, short = 'n')]
+        pub dry_run: bool,
+
+        /// Request all-or-nothing ref updates on the remote side; one rejection rolls the whole batch back.
+        #[clap(long)]
+        pub atomic: bool,
+
+        /// Allow non-fast-forward updates on every refspec, matching `git push --force`.
+        /// Per-refspec `+` prefixes are honoured regardless of this flag.
+        #[clap(long, short = 'f')]
+        pub force: bool,
+
+        /// After a successful push, record `branch.<name>.{remote,merge}` for every
+        /// local branch that was pushed, matching `git push --set-upstream`.
+        #[clap(long, short = 'u')]
+        pub set_upstream: bool,
+
+        /// Ask the remote to suppress side-band progress output.
+        #[clap(long, short = 'q')]
+        pub quiet: bool,
+
+        /// Forward a `push-option` string to the server; may be passed multiple times.
+        #[clap(long = "push-option", short = 'o', value_parser = crate::shared::AsBString, value_name = "STRING")]
+        pub push_options: Vec<gix::bstr::BString>,
+
+        /// The name of the remote to connect to, or the URL of the remote to connect to directly.
+        ///
+        /// If omitted, the current branch's push remote is used (`branch.<name>.pushRemote`,
+        /// `remote.pushDefault`, or the fetch remote), matching `git push`'s selection.
+        #[clap(value_name = "REMOTE")]
+        pub remote: Option<String>,
+
+        /// Refspecs to push: `src[:dst]`, `:dst` to delete, or a bare ref name. When empty,
+        /// `remote.<name>.push` is consulted first, then the `push.default` policy.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REFSPEC")]
+        pub ref_spec: Vec<gix::bstr::BString>,
     }
 }
 
